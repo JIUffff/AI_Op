@@ -1,0 +1,16 @@
+pyproject.toml
+src/__init__.py
+src/api.py
+src/graph.py
+src/state.py
+src/engines/__init__.py
+src/engines/app_scanner.py
+src/engines/process_engine.py
+src/local_auto_runtime.egg-info/PKG-INFO
+src/local_auto_runtime.egg-info/SOURCES.txt
+src/local_auto_runtime.egg-info/dependency_links.txt
+src/local_auto_runtime.egg-info/requires.txt
+src/local_auto_runtime.egg-info/top_level.txt
+src/mcp_tools/__init__.py
+tests/test_app_scanner.py
+tests/test_graph.py
