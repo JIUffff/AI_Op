@@ -1,7 +1,6 @@
 from langgraph.graph import StateGraph, END
 from .state import TaskState
 import logging
-import traceback
 
 logger = logging.getLogger("runtime.graph")
 
