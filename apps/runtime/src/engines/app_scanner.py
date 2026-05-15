@@ -83,6 +83,20 @@ class AppScanner:
                     cdp_port=config.get("cdp_port"),
                 )
 
+        exe = self._find_via_registry(config)
+        if exe and exe.exists():
+            return AppInfo(
+                app_id=app_id,
+                display_name=config["display_name"],
+                executable_path=exe,
+                install_location=exe.parent,
+                category=config.get("category", ""),
+                supports_cli=config.get("supports_cli", False),
+                cli_command=config.get("cli_command"),
+                supports_cdp=config.get("supports_cdp", False),
+                cdp_port=config.get("cdp_port"),
+            )
+
         for exe_name in config.get("executable_names", []):
             for search_dir in [
                 Path(r"C:\Program Files"),
@@ -91,22 +105,75 @@ class AppScanner:
             ]:
                 if not search_dir.exists():
                     continue
-                try:
-                    found = list(search_dir.glob(f"**/{exe_name}"))
-                    if found:
-                        return AppInfo(
-                            app_id=app_id,
-                            display_name=config["display_name"],
-                            executable_path=found[0],
-                            install_location=found[0].parent,
-                            category=config.get("category", ""),
-                            supports_cli=config.get("supports_cli", False),
-                            cli_command=config.get("cli_command"),
-                            supports_cdp=config.get("supports_cdp", False),
-                            cdp_port=config.get("cdp_port"),
-                        )
-                except (OSError, PermissionError):
-                    continue
+                for top_dir in search_dir.iterdir():
+                    if not top_dir.is_dir():
+                        continue
+                    try:
+                        found = list(top_dir.glob(exe_name))
+                        if found:
+                            return AppInfo(
+                                app_id=app_id,
+                                display_name=config["display_name"],
+                                executable_path=found[0],
+                                install_location=found[0].parent,
+                                category=config.get("category", ""),
+                                supports_cli=config.get("supports_cli", False),
+                                cli_command=config.get("cli_command"),
+                                supports_cdp=config.get("supports_cdp", False),
+                                cdp_port=config.get("cdp_port"),
+                            )
+                    except (OSError, PermissionError):
+                        continue
 
         logger.warning(f"App not found: {app_id}")
+        return None
+
+    def _find_via_registry(self, config: dict) -> Optional[Path]:
+        if sys.platform != "win32":
+            return None
+
+        try:
+            import winreg
+        except ImportError:
+            return None
+
+        exe_names = config.get("executable_names", [])
+
+        registry_paths = [
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ]
+
+        for hkey, subkey in registry_paths:
+            try:
+                key = winreg.OpenKey(hkey, subkey)
+                i = 0
+                while True:
+                    try:
+                        app_key_name = winreg.EnumKey(key, i)
+                        i += 1
+                    except OSError:
+                        break
+
+                    try:
+                        app_key = winreg.OpenKey(key, app_key_name)
+                        display_name = winreg.QueryValueEx(app_key, "DisplayName")[0]
+                        install_loc = winreg.QueryValueEx(app_key, "InstallLocation")[0]
+
+                        if any(name.lower() in display_name.lower() for name in exe_names):
+                            winreg.CloseKey(app_key)
+                            install_path = Path(install_loc)
+                            for exe_name in exe_names:
+                                exe_path = install_path / exe_name
+                                if exe_path.exists():
+                                    return exe_path
+                        winreg.CloseKey(app_key)
+                    except (OSError, FileNotFoundError):
+                        continue
+
+                winreg.CloseKey(key)
+            except OSError:
+                continue
+
         return None

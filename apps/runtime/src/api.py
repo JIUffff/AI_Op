@@ -18,7 +18,7 @@ api = FastAPI(title="Local Auto Runtime")
 
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,20 +57,20 @@ class LaunchAppResponse(BaseModel):
 
 @api.post("/api/tasks", response_model=TaskResponse)
 async def create_task(req: CreateTaskRequest):
-    state: TaskState = {
-        "task_id": f"task_{len(task_store) + 1:04d}",
-        "user_input": req.user_input,
-        "skill_id": None,
-        "status": "pending",
-        "steps": [],
-        "current_step": 0,
-        "error_code": None,
-        "started_at": datetime.now(),
-        "finished_at": None,
-        "recovery_attempted": False,
-    }
+    state = TaskState(
+        task_id=f"task_{len(task_store) + 1:04d}",
+        user_input=req.user_input,
+        skill_id=None,
+        status="pending",
+        steps=[],
+        current_step=0,
+        error_code=None,
+        started_at=datetime.now(),
+        finished_at=None,
+        recovery_attempted=False,
+    )
 
-    result = await workflow.ainvoke(state)
+    result = await workflow.ainvoke(state.model_dump())
     result["finished_at"] = datetime.now()
 
     task_store[result["task_id"]] = result

@@ -6,6 +6,9 @@ from typing import Optional
 
 logger = logging.getLogger("runtime.process_engine")
 
+LAUNCH_TIMEOUT = 15.0
+POLL_INTERVAL = 0.5
+
 
 class ProcessEngine:
     def list_processes(self) -> list[dict]:
@@ -41,14 +44,18 @@ class ProcessEngine:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(wait_seconds)
 
-            if proc.poll() is not None:
-                return {
-                    "pid": proc.pid,
-                    "success": False,
-                    "error": f"Process exited with code {proc.returncode}",
-                }
+            actual_wait = min(wait_seconds, LAUNCH_TIMEOUT)
+            elapsed = 0.0
+            while elapsed < actual_wait:
+                time.sleep(POLL_INTERVAL)
+                elapsed += POLL_INTERVAL
+                if proc.poll() is not None:
+                    return {
+                        "pid": proc.pid,
+                        "success": False,
+                        "error": f"Process exited with code {proc.returncode} after {elapsed:.1f}s",
+                    }
 
             return {
                 "pid": proc.pid,
