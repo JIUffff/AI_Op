@@ -8,10 +8,10 @@ from typing import Optional
 logger = logging.getLogger("runtime.engines.vscode_engine")
 
 DEFAULT_VSCODE_PATH = Path(
-    r"C:\Users\Admin\AppData\Local\Programs\Microsoft VS Code\Code.exe"
+    r"D:\Main_SoftWare\AI_IDE\Microsoft VS Code\Code.exe"
 )
 DEFAULT_CODE_CLI = Path(
-    r"C:\Users\Admin\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd"
+    r"D:\Main_SoftWare\AI_IDE\Microsoft VS Code\bin\code.cmd"
 )
 
 

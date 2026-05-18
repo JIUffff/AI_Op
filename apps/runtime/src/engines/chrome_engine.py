@@ -1,6 +1,7 @@
 """Chrome CDP 引擎：通过 Chrome DevTools Protocol 控制浏览器。"""
 import json
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -34,20 +35,60 @@ class ChromeEngine:
         self._ws: Optional[websocket.WebSocket] = None
         self._cmd_id: int = 0
 
-    def _get_debug_url(self, timeout: float = 5.0) -> Optional[str]:
+    def _get_debug_url(self, timeout: float = 10.0) -> Optional[str]:
         """获取 WebSocket 调试 URL。"""
         import urllib.request
         import urllib.error
+        import socket
 
         url = f"http://localhost:{self.debug_port}/json/version"
+        tabs_url = f"http://localhost:{self.debug_port}/json"
+        start = time.time()
+        
+        # Wait for port to be open
+        while time.time() - start < timeout:
+            try:
+                with socket.create_connection(("localhost", self.debug_port), timeout=1):
+                    break  # Port is open
+            except (ConnectionRefusedError, OSError):
+                time.sleep(0.5)
+        else:
+            logger.error(f"CDP port {self.debug_port} never became available")
+            return None
+
+        # First try to get a page/tab WebSocket URL
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                with urllib.request.urlopen(tabs_url, timeout=2) as resp:
+                    tabs = json.loads(resp.read().decode())
+                    for tab in tabs:
+                        if tab.get("type") == "page" and tab.get("webSocketDebuggerUrl"):
+                            ws_url = tab["webSocketDebuggerUrl"]
+                            logger.info(f"CDP connected to page: {ws_url[:60]}...")
+                            return ws_url
+                    # Fallback: use first available tab
+                    if tabs and tabs[0].get("webSocketDebuggerUrl"):
+                        ws_url = tabs[0]["webSocketDebuggerUrl"]
+                        logger.info(f"CDP connected to first tab: {ws_url[:60]}...")
+                        return ws_url
+                    time.sleep(0.5)
+            except (urllib.error.URLError, ConnectionError, OSError):
+                time.sleep(0.5)
+
+        # Fallback: browser-level debugger URL (for global commands)
         start = time.time()
         while time.time() - start < timeout:
             try:
                 with urllib.request.urlopen(url, timeout=2) as resp:
                     data = json.loads(resp.read().decode())
-                    return data.get("webSocketDebuggerUrl")
-            except (urllib.error.URLError, ConnectionError, OSError):
+                    ws_url = data.get("webSocketDebuggerUrl")
+                    logger.info(f"CDP connected (browser): {ws_url[:60]}...")
+                    return ws_url
+            except (urllib.error.URLError, ConnectionError, OSError) as e:
+                logger.debug(f"CDP URL fetch failed: {e}")
                 time.sleep(0.5)
+        logger.error(f"Failed to get webSocketDebuggerUrl within {timeout}s")
         return None
 
     def _execute_cdp(self, method: str, params: Optional[dict] = None) -> dict:
@@ -104,25 +145,39 @@ class ChromeEngine:
                 "message": "Chrome 已在运行中",
             }
 
+        # Create a temporary user data dir to avoid reusing existing Chrome instances
+        import tempfile
+        user_data_dir = tempfile.mkdtemp(prefix="chrome_cdp_")
+        self._user_data_dir = user_data_dir
+
         cmd = [
             str(self.exe_path),
             f"--remote-debugging-port={self.debug_port}",
+            "--remote-allow-origins=*",
+            f"--user-data-dir={user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-dev-shm-usage",
+            "--disable-background-networking",
             url,
         ]
 
-        logger.info(f"Launching Chrome: {' '.join(cmd[:3])}...")
+        logger.info(f"Launching Chrome: {' '.join(cmd[:5])}...")
         try:
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             self._pid = proc.pid
 
-            time.sleep(3)
-            self._ws_url = self._get_debug_url(timeout=10)
+            logger.info(f"Chrome started with PID {self._pid}, waiting for CDP...")
+            time.sleep(2)
+            self._ws_url = self._get_debug_url(timeout=15)
 
             if self._ws_url:
                 return {
@@ -131,6 +186,13 @@ class ChromeEngine:
                     "error": None,
                     "message": "Chrome 启动成功",
                 }
+
+            # Log stderr for debugging
+            try:
+                stderr_output = proc.stderr.read(500).decode("utf-8", errors="replace")
+                logger.error(f"Chrome stderr (first 500 chars): {stderr_output}")
+            except:
+                pass
 
             return {
                 "pid": self._pid,
@@ -214,20 +276,27 @@ class ChromeEngine:
         返回：
             {"text": str, "success": bool, "error": str | None}
         """
+        # Wait for page to be fully loaded
+        time.sleep(2)
+        
         js = """
-        () => {
-            const clone = document.body.cloneNode(true);
-            const removeSelectors = [
+        (function() {
+            if (!document || !document.body) return '';
+            var clone = document.body.cloneNode(true);
+            var removeSelectors = [
                 'script', 'style', 'noscript', 'iframe', 'svg',
                 'header', 'footer', 'nav', 'aside',
                 '.sidebar', '.nav', '.footer', '.header',
                 '[role="navigation"]', '[role="complementary"]'
             ];
-            removeSelectors.forEach(sel => {
-                clone.querySelectorAll(sel).forEach(el => el.remove());
-            });
-            return clone.innerText;
-        }
+            for (var i = 0; i < removeSelectors.length; i++) {
+                var els = clone.querySelectorAll(removeSelectors[i]);
+                for (var j = 0; j < els.length; j++) {
+                    els[j].parentNode.removeChild(els[j]);
+                }
+            }
+            return (clone.innerText || clone.textContent || '');
+        })();
         """
         result = self._execute_cdp(
             "Runtime.evaluate",
@@ -235,7 +304,12 @@ class ChromeEngine:
         )
 
         if result["success"]:
-            text = result["result"].get("result", {}).get("value", "")
+            cdp_result = result["result"]
+            eval_result = cdp_result.get("result", {})
+            text = eval_result.get("value", "")
+            if not isinstance(text, str):
+                text = str(text) if text else ""
+            logger.info(f"Content extracted: {len(text)} chars")
             return {
                 "text": text[:5000],
                 "success": True,
