@@ -344,7 +344,56 @@ def validate_path(user_path: str) -> Path:
 
 ---
 
-## 7. 发布流程
+## 8. 界面语言规范
+
+### 8.1 基本原则
+
+- **主要语言：中文** — 所有面向用户的界面文本、按钮、标签、提示信息、占位符等必须使用中文
+- **辅助语言：英文** — 仅在以下情况使用英文：
+  - 技术标识符（如 task_id、skill_id 等字段名）
+  - 代码、日志、错误堆栈
+  - 品牌名、产品名（如 Local AI Skill OS 作为副标题可保留英文）
+  - 专业术语无合适中文翻译时
+
+### 8.2 前端组件示例
+
+```tsx
+// 正确
+<h2>可用技能</h2>
+<button>执行技能</button>
+<p>暂无可用技能</p>
+
+// 错误
+<h2>Available Skills</h2>
+<button>Execute Skill</button>
+<p>No skills available</p>
+```
+
+### 8.3 后端 API 示例
+
+```python
+# 正确
+return {"status": "ok", "message": "任务创建成功"}
+
+# 错误
+return {"status": "ok", "message": "Task created successfully"}
+```
+
+### 8.4 错误提示
+
+错误提示必须使用中文，同时保留技术错误码：
+
+```tsx
+// 正确
+<p>执行失败（错误码：SKILL_NOT_FOUND）</p>
+
+// 错误
+<p>Skill execution failed (error: SKILL_NOT_FOUND)</p>
+```
+
+---
+
+## 9. 发布流程
 
 ### 7.1 版本号规范
 
