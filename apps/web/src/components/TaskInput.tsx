@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useTaskStore } from './stores/taskStore'
+import { useTaskStore } from '../stores/taskStore'
 
 function TaskInput() {
   const [input, setInput] = useState('')
@@ -17,7 +17,7 @@ function TaskInput() {
         type="text"
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        placeholder="Enter a task..."
+        placeholder="请输入任务内容..."
         style={{ width: '100%', padding: '0.5rem', fontSize: '1rem' }}
         disabled={loading}
       />
@@ -26,7 +26,7 @@ function TaskInput() {
         disabled={loading || !input.trim()}
         style={{ marginTop: '0.5rem', padding: '0.5rem 1rem' }}
       >
-        {loading ? 'Running...' : 'Run Task'}
+        {loading ? '执行中...' : '执行任务'}
       </button>
     </form>
   )
