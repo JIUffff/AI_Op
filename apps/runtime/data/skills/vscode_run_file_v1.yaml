@@ -1,0 +1,85 @@
+skill_id: vscode_run_file_v1
+display_name: "使用 VSCode 打开文件"
+version: "1.0.0"
+description: "启动 VSCode 并打开指定文件，验证文件已在编辑器中加载"
+category: editor
+required_engines:
+  - vscode
+
+preconditions:
+  - type: app_installed
+    value: "code"
+
+steps:
+  - step_id: open_vscode
+    action: launch
+    engine: vscode
+    args:
+      folder: ""
+    timeout: 10.0
+    expect:
+      description: "VSCode 进程已启动"
+      conditions:
+        process_name: "code"
+    verify:
+      type: process
+      method: check_process
+      args:
+        process_name: "code"
+
+  - step_id: open_file
+    action: open_file
+    engine: vscode
+    args:
+      file_path: "{file_path}"
+    timeout: 15.0
+    expect:
+      description: "文件已在编辑器中打开"
+      conditions:
+        file_loaded: true
+    verify:
+      type: uia
+      method: check_active_document
+      args:
+        file_path: "{file_path}"
+
+  - step_id: run_file
+    action: run_file
+    engine: vscode
+    args: {}
+    timeout: 30.0
+    expect:
+      description: "文件已执行并输出结果"
+      conditions:
+        output_generated: true
+
+recovery:
+  strategies:
+    open_vscode:
+      - if_condition: "process_not_found"
+        then_actions:
+          - action: log_error
+            args:
+              message: "VSCode 未启动，尝试重新启动"
+          - action: launch
+            args:
+              folder: ""
+        retry_original: true
+    open_file:
+      - if_condition: "file_not_found"
+        then_actions:
+          - action: log_warning
+            args:
+              message: "文件不存在，跳过打开"
+        retry_original: false
+
+rollback:
+  - action: close
+    args: {}
+    condition: "skill_failed"
+
+metadata:
+  author: "local-auto"
+  tags:
+    - editor
+    - vscode

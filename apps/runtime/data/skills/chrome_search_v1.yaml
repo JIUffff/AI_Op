@@ -1,0 +1,89 @@
+skill_id: chrome_search_v1
+display_name: "Chrome 浏览器搜索"
+version: "1.0.0"
+description: "打开 Chrome 浏览器，导航到搜索引擎并执行搜索"
+category: browser
+required_engines:
+  - chrome
+
+preconditions:
+  - type: app_installed
+    value: "chrome"
+
+steps:
+  - step_id: open_chrome
+    action: launch
+    engine: chrome
+    args:
+      url: "about:blank"
+    timeout: 15.0
+    expect:
+      description: "Chrome 进程已启动"
+      conditions:
+        process_name: "chrome"
+    verify:
+      type: process
+      method: check_process
+      args:
+        process_name: "chrome"
+
+  - step_id: perform_search
+    action: search
+    engine: chrome
+    args:
+      query: "{query}"
+    timeout: 20.0
+    expect:
+      description: "搜索结果页面已加载"
+      conditions:
+        page_loaded: true
+    verify:
+      type: assertion
+      method: check_url_contains
+      args:
+        pattern: "search?q="
+
+  - step_id: extract_content
+    action: extract_content
+    engine: chrome
+    args: {}
+    timeout: 10.0
+    expect:
+      description: "页面内容已提取"
+      conditions:
+        content_extracted: true
+
+recovery:
+  strategies:
+    open_chrome:
+      - if_condition: "process_not_found"
+        then_actions:
+          - action: log_error
+            args:
+              message: "Chrome 未启动，尝试重新启动"
+          - action: launch
+            args:
+              url: "about:blank"
+        retry_original: true
+    perform_search:
+      - if_condition: "navigation_failed"
+        then_actions:
+          - action: log_warning
+            args:
+              message: "导航失败，尝试使用备用搜索引擎"
+          - action: search
+            args:
+              query: "{query}"
+              engine_url: "https://www.bing.com/search?q="
+        retry_original: false
+
+rollback:
+  - action: close
+    args: {}
+    condition: "skill_failed"
+
+metadata:
+  author: "local-auto"
+  tags:
+    - browser
+    - search

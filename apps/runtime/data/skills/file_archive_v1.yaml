@@ -1,0 +1,84 @@
+skill_id: file_archive_v1
+display_name: "文件归档"
+version: "1.0.0"
+description: "扫描目录，分类文件，移动到归档目录，记录归档日志"
+category: file
+required_engines:
+  - file_engine
+
+preconditions:
+  - type: directory_exists
+    value: "{source_dir}"
+
+steps:
+  - step_id: scan_directory
+    action: scan_directory
+    engine: file_engine
+    args:
+      dir_path: "{source_dir}"
+    timeout: 10.0
+    expect:
+      description: "目录已扫描，文件列表已获取"
+      conditions:
+        files_found: true
+
+  - step_id: classify_files
+    action: classify_files
+    engine: file_engine
+    args:
+      files: []
+    timeout: 5.0
+    expect:
+      description: "文件已分类"
+      conditions:
+        categories_created: true
+
+  - step_id: organize_directory
+    action: organize_directory
+    engine: file_engine
+    args:
+      dir_path: "{source_dir}"
+    timeout: 30.0
+    expect:
+      description: "目录已整理，文件已归档"
+      conditions:
+        files_moved: true
+
+recovery:
+  strategies:
+    scan_directory:
+      - if_condition: "directory_not_found"
+        then_actions:
+          - action: log_error
+            args:
+              message: "源目录不存在"
+        retry_original: false
+    classify_files:
+      - if_condition: "classification_failed"
+        then_actions:
+          - action: log_warning
+            args:
+              message: "分类失败，使用默认分类"
+        retry_original: false
+    organize_directory:
+      - if_condition: "move_failed"
+        then_actions:
+          - action: log_warning
+            args:
+              message: "移动文件失败，尝试创建目标目录"
+          - action: create_directory
+            args:
+              dir_path: "{source_dir}"
+        retry_original: true
+
+rollback:
+  - action: rollback
+    args:
+      operation_index: -1
+    condition: "skill_failed"
+
+metadata:
+  author: "local-auto"
+  tags:
+    - file
+    - archive
