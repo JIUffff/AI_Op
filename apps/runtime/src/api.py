@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -10,6 +10,14 @@ from .state import TaskState
 from .graph import create_workflow
 from .engines.app_scanner import AppScanner
 from .engines.process_engine import ProcessEngine
+from .engines.app_profile import AppProfileManager
+from .engines.vscode_engine import VSCodeEngine
+from .engines.chrome_engine import ChromeEngine
+from .engines.file_engine import FileEngine
+from .skills.registry import SkillRegistry
+from .skills.executor import WorkflowExecutor
+from .trajectory.recorder import TrajectoryRecorder
+from .skills.models import SkillStep
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("runtime.api")
@@ -26,10 +34,29 @@ api.add_middleware(
 
 workflow = create_workflow()
 task_store: dict[str, TaskState] = {}
+skill_registry = SkillRegistry()
+trajectory_recorder = TrajectoryRecorder()
+
+# M6 真实引擎
+vscode_engine = VSCodeEngine()
+chrome_engine = ChromeEngine()
+file_engine = FileEngine()
+
+workflow_executor = WorkflowExecutor(recorder=trajectory_recorder)
+
+# 注册引擎
+workflow_executor.register_engine("vscode", vscode_engine)
+workflow_executor.register_engine("chrome", chrome_engine)
+workflow_executor.register_engine("file_engine", file_engine)
 
 
 class CreateTaskRequest(BaseModel):
     user_input: str
+
+
+class TaskListResponse(BaseModel):
+    tasks: list[dict]
+    total: int
 
 
 class TaskResponse(BaseModel):
@@ -43,6 +70,17 @@ class AppInfoResponse(BaseModel):
     display_name: str
     category: str
     executable_path: str
+    supports_cli: bool = False
+    supports_cdp: bool = False
+
+
+class AppProfileResponse(BaseModel):
+    app_id: str
+    display_name: str
+    category: str
+    automation_method: str
+    cli_command: str | None = None
+    window_patterns: list[str] = []
 
 
 class LaunchAppRequest(BaseModel):
@@ -53,6 +91,36 @@ class LaunchAppResponse(BaseModel):
     success: bool
     pid: int | None
     error: str | None
+
+
+class ExecuteSkillRequest(BaseModel):
+    skill_id: str
+    params: dict = {}
+
+
+class SkillInfoResponse(BaseModel):
+    skill_id: str
+    display_name: str
+    version: str
+    description: str
+    category: str
+    step_count: int
+
+
+class SkillDetailResponse(BaseModel):
+    skill_id: str
+    display_name: str
+    version: str
+    description: str
+    category: str
+    steps: list[dict]
+
+
+class SkillExecuteResponse(BaseModel):
+    success: bool
+    result: dict | None
+    error: dict | None
+    steps_executed: list[dict] = []
 
 
 @api.post("/api/tasks", response_model=TaskResponse)
@@ -82,6 +150,20 @@ async def create_task(req: CreateTaskRequest):
         status=result["status"],
         steps=result["steps"],
     )
+
+
+@api.get("/api/tasks", response_model=TaskListResponse)
+async def list_tasks():
+    tasks = []
+    for task in task_store.values():
+        tasks.append({
+            "task_id": task["task_id"],
+            "status": task["status"],
+            "steps": task["steps"],
+            "started_at": task["started_at"].isoformat() if task["started_at"] else None,
+            "finished_at": task["finished_at"].isoformat() if task["finished_at"] else None,
+        })
+    return TaskListResponse(tasks=tasks, total=len(tasks))
 
 
 @api.get("/api/tasks/{task_id}")
@@ -121,6 +203,18 @@ async def launch_app(req: LaunchAppRequest):
         return LaunchAppResponse(success=False, pid=None, error=f"App not found: {req.app_id}")
 
     engine = ProcessEngine()
+    exe_name = app_info.executable_path.name
+
+    if engine.is_process_running(exe_name):
+        windows = engine.find_windows_by_title(app_info.display_name)
+        if windows:
+            engine.bring_window_to_front(windows[0]["hwnd"])
+            return LaunchAppResponse(
+                success=True,
+                pid=windows[0]["pid"],
+                error=None,
+            )
+
     result = engine.launch_app(app_info.executable_path)
 
     return LaunchAppResponse(
@@ -130,6 +224,67 @@ async def launch_app(req: LaunchAppRequest):
     )
 
 
+@api.get("/api/apps/{app_id}/profile", response_model=AppProfileResponse | None)
+async def get_app_profile(app_id: str):
+    profile_manager = AppProfileManager()
+    profile = profile_manager.load(app_id)
+    if not profile:
+        return None
+    return AppProfileResponse(
+        app_id=profile.app_id,
+        display_name=profile.display_name,
+        category=profile.category,
+        automation_method=profile.automation.preferred_method,
+        cli_command=profile.automation.cli_command,
+        window_patterns=profile.window_patterns,
+    )
+
+
 @api.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@api.get("/api/skills", response_model=list[SkillInfoResponse])
+async def list_skills():
+    skills = skill_registry.list_all()
+    return [
+        SkillInfoResponse(
+            skill_id=s.skill_id,
+            display_name=s.display_name,
+            version=s.version,
+            description=s.description,
+            category=s.category,
+            step_count=len(s.steps),
+        )
+        for s in skills
+    ]
+
+
+@api.get("/api/skills/{skill_id}", response_model=SkillDetailResponse)
+async def get_skill(skill_id: str):
+    skill = skill_registry.load(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
+    return SkillDetailResponse(
+        skill_id=skill.skill_id,
+        display_name=skill.display_name,
+        version=skill.version,
+        description=skill.description,
+        category=skill.category,
+        steps=[s.model_dump() for s in skill.steps],
+    )
+
+
+@api.post("/api/skills/execute", response_model=SkillExecuteResponse)
+async def execute_skill(req: ExecuteSkillRequest):
+    skill = skill_registry.load(req.skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill not found: {req.skill_id}")
+    result = workflow_executor.execute(skill, req.params)
+    return SkillExecuteResponse(
+        success=result["success"],
+        result=result.get("result"),
+        error=result.get("error"),
+        steps_executed=result.get("steps_executed", []),
+    )
