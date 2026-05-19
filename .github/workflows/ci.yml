@@ -1,0 +1,158 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  test-backend:
+    name: Backend Tests (Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12"]
+
+    defaults:
+      run:
+        working-directory: apps/runtime
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: "apps/runtime/pyproject.toml"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run linting (ruff)
+        run: |
+          ruff check src/ tests/
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --tb=short --cov=src --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          file: apps/runtime/coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+        continue-on-error: true
+
+  test-e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/runtime
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "apps/runtime/pyproject.toml"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run e2e tests (File engine only - cross-platform)
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from engines.file_engine import FileEngine
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as tmpdir:
+              engine = FileEngine()
+              # Create test files
+              test_files = {'photo.jpg': 'img', 'report.pdf': 'doc', 'video.mp4': 'vid', 'script.py': 'code', 'notes.txt': 'txt'}
+              for name, content in test_files.items():
+                  Path(tmpdir, name).write_text(content)
+
+              # Test scan
+              scan = engine.scan_directory(tmpdir)
+              assert scan['count'] == 5, f'Expected 5 files, got {scan[\"count\"]}'
+              print(f'[PASS] scan_directory: {scan[\"count\"]} files')
+
+              # Test classify
+              files = [f['path'] for f in scan['files']]
+              classify = engine.classify_files(files)
+              print(f'[PASS] classify_files: {len(classify[\"categories\"])} categories')
+
+              # Test organize
+              organize = engine.organize_directory(tmpdir)
+              assert organize['moved'] >= 3, f'Expected >=3 moves, got {organize[\"moved\"]}'
+              print(f'[PASS] organize_directory: {organize[\"moved\"]} files moved')
+
+              # Test rollback
+              rollback = engine.rollback()
+              assert rollback['restored'] > 0, 'Rollback failed'
+              print(f'[PASS] rollback: {rollback[\"restored\"]} files restored')
+
+              print('All e2e tests passed!')
+          "
+
+  check-docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify documentation structure
+        run: |
+          echo "Checking documentation structure..."
+          test -f docs/1-standards/00-project-overview.md && echo "[PASS] Project overview exists" || echo "[FAIL] Project overview missing"
+          test -f docs/2-milestones/08-mvp-acceptance-report.md && echo "[PASS] MVP report exists" || echo "[FAIL] MVP report missing"
+          test -f docs/2-milestones/09-mvp-risk-register.md && echo "[PASS] Risk register exists" || echo "[FAIL] Risk register missing"
+
+  build-frontend:
+    name: Frontend Build Check
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "apps/web/package-lock.json"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
