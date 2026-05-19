@@ -38,7 +38,7 @@ export interface SkillExecuteResult {
   steps_executed: Array<Record<string, unknown>>
 }
 
-interface AppState {
+export interface AppState {
   taskId: string | null
   status: string | null
   steps: string[]

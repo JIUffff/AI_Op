@@ -132,8 +132,8 @@ jobs:
           test -f docs/2-milestones/08-mvp-acceptance-report.md && echo "[PASS] MVP report exists" || echo "[FAIL] MVP report missing"
           test -f docs/2-milestones/09-mvp-risk-register.md && echo "[PASS] Risk register exists" || echo "[FAIL] Risk register missing"
 
-  build-frontend:
-    name: Frontend Build Check
+  test-frontend:
+    name: Frontend Tests & Build
     runs-on: ubuntu-latest
 
     defaults:
@@ -153,6 +153,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run tests
+        run: npm test
 
       - name: Build
         run: npm run build

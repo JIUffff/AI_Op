@@ -124,7 +124,7 @@ export default function SkillExecutor({ skill, onBack }: SkillExecutorProps) {
               </div>
             )}
 
-            {skillExecuteResult.steps_executed.length > 0 && (
+            {skillExecuteResult && skillExecuteResult.steps_executed.length > 0 && (
               <div style={styles.resultDetail}>
                 <strong>已执行步骤：</strong>
                 <div style={styles.stepsList}>
