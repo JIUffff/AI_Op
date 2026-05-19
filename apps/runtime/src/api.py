@@ -22,7 +22,19 @@ from .skills.models import SkillStep
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("runtime.api")
 
-api = FastAPI(title="Local Auto Runtime")
+api = FastAPI(
+    title="Local Auto Runtime",
+    description="本地 AI Skill 自动化运行时 API\n\n提供任务执行、技能管理、应用控制和文件操作等功能。",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "Tasks", "description": "任务创建和查询"},
+        {"name": "Skills", "description": "技能列表、详情和执行"},
+        {"name": "Apps", "description": "应用扫描、启动和配置查询"},
+        {"name": "Health", "description": "服务健康检查"},
+    ],
+)
 
 api.add_middleware(
     CORSMiddleware,
@@ -123,8 +135,14 @@ class SkillExecuteResponse(BaseModel):
     steps_executed: list[dict] = []
 
 
-@api.post("/api/tasks", response_model=TaskResponse)
+@api.post("/api/tasks", response_model=TaskResponse, tags=["Tasks"], summary="创建并执行任务")
 async def create_task(req: CreateTaskRequest):
+    """接收用户自然语言输入，通过 LangGraph 工作流执行任务。
+
+    - 解析用户意图并路由到对应技能
+    - 执行技能步骤
+    - 返回任务结果
+    """
     state = TaskState(
         task_id=f"task_{len(task_store) + 1:04d}",
         user_input=req.user_input,
@@ -152,8 +170,9 @@ async def create_task(req: CreateTaskRequest):
     )
 
 
-@api.get("/api/tasks", response_model=TaskListResponse)
+@api.get("/api/tasks", response_model=TaskListResponse, tags=["Tasks"], summary="查询任务列表")
 async def list_tasks():
+    """返回所有已创建任务的摘要列表。"""
     tasks = []
     for task in task_store.values():
         tasks.append({
@@ -166,8 +185,9 @@ async def list_tasks():
     return TaskListResponse(tasks=tasks, total=len(tasks))
 
 
-@api.get("/api/tasks/{task_id}")
+@api.get("/api/tasks/{task_id}", tags=["Tasks"], summary="查询单个任务详情")
 async def get_task(task_id: str):
+    """根据 task_id 获取单个任务的详细信息。"""
     task = task_store.get(task_id)
     if not task:
         return {"error": "Task not found"}
@@ -180,8 +200,9 @@ async def get_task(task_id: str):
     }
 
 
-@api.get("/api/apps", response_model=list[AppInfoResponse])
+@api.get("/api/apps", response_model=list[AppInfoResponse], tags=["Apps"], summary="列出已安装应用")
 async def list_apps():
+    """扫描系统已安装的应用，返回应用列表。"""
     scanner = AppScanner()
     apps = scanner.scan()
     return [
@@ -195,8 +216,9 @@ async def list_apps():
     ]
 
 
-@api.post("/api/apps/launch", response_model=LaunchAppResponse)
+@api.post("/api/apps/launch", response_model=LaunchAppResponse, tags=["Apps"], summary="启动应用")
 async def launch_app(req: LaunchAppRequest):
+    """启动指定应用。如果应用已在运行，则将其窗口前置。"""
     scanner = AppScanner()
     app_info = scanner.get_app(req.app_id)
     if not app_info:
@@ -224,8 +246,9 @@ async def launch_app(req: LaunchAppRequest):
     )
 
 
-@api.get("/api/apps/{app_id}/profile", response_model=AppProfileResponse | None)
+@api.get("/api/apps/{app_id}/profile", response_model=AppProfileResponse | None, tags=["Apps"], summary="查询应用配置")
 async def get_app_profile(app_id: str):
+    """获取指定应用的自动化配置信息，包括自动化方法、CLI 命令和窗口匹配模式。"""
     profile_manager = AppProfileManager()
     profile = profile_manager.load(app_id)
     if not profile:
@@ -240,13 +263,15 @@ async def get_app_profile(app_id: str):
     )
 
 
-@api.get("/api/health")
+@api.get("/api/health", tags=["Health"], summary="服务健康检查")
 async def health():
+    """检查服务是否正常运行。"""
     return {"status": "ok"}
 
 
-@api.get("/api/skills", response_model=list[SkillInfoResponse])
+@api.get("/api/skills", response_model=list[SkillInfoResponse], tags=["Skills"], summary="列出所有可用技能")
 async def list_skills():
+    """返回所有已注册的技能列表，包含基本信息和步骤数量。"""
     skills = skill_registry.list_all()
     return [
         SkillInfoResponse(
@@ -261,8 +286,9 @@ async def list_skills():
     ]
 
 
-@api.get("/api/skills/{skill_id}", response_model=SkillDetailResponse)
+@api.get("/api/skills/{skill_id}", response_model=SkillDetailResponse, tags=["Skills"], summary="获取技能详情")
 async def get_skill(skill_id: str):
+    """根据 skill_id 获取技能的详细信息，包括完整步骤列表。"""
     skill = skill_registry.load(skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
@@ -276,8 +302,14 @@ async def get_skill(skill_id: str):
     )
 
 
-@api.post("/api/skills/execute", response_model=SkillExecuteResponse)
+@api.post("/api/skills/execute", response_model=SkillExecuteResponse, tags=["Skills"], summary="执行技能")
 async def execute_skill(req: ExecuteSkillRequest):
+    """执行指定技能，可传入自定义参数。
+
+    - 技能必须在注册表中存在
+    - 参数将合并到技能步骤的模板参数中
+    - 返回执行结果和已执行的步骤
+    """
     skill = skill_registry.load(req.skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill not found: {req.skill_id}")
