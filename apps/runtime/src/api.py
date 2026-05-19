@@ -320,3 +320,66 @@ async def execute_skill(req: ExecuteSkillRequest):
         error=result.get("error"),
         steps_executed=result.get("steps_executed", []),
     )
+
+
+class MaintenanceResponse(BaseModel):
+    database: dict
+    backups: dict
+    logs: dict
+    rollback_log: dict
+
+
+class BackupResponse(BaseModel):
+    success: bool
+    backup_path: str | None
+    size_bytes: int
+    error: str | None
+
+
+class RestoreRequest(BaseModel):
+    backup_path: str
+
+
+class RestoreResponse(BaseModel):
+    success: bool
+    restored_path: str | None
+    error: str | None
+
+
+class RotateResponse(BaseModel):
+    rotated: int
+    deleted: int
+    total_size_before: int
+    total_size_after: int
+
+
+@api.get("/api/maintenance/status", response_model=MaintenanceResponse, tags=["Health"], summary="查看维护状态")
+async def get_maintenance_status():
+    """返回数据库、备份、日志的当前状态摘要。"""
+    from src.maintenance import maintenance_status
+    status = maintenance_status()
+    return MaintenanceResponse(**status)
+
+
+@api.post("/api/maintenance/backup", response_model=BackupResponse, tags=["Health"], summary="备份数据库")
+async def backup_database():
+    """创建 SQLite 数据库的 gzip 压缩备份，自动清理超过 7 天的旧备份。"""
+    from src.maintenance import backup_database
+    result = backup_database()
+    return BackupResponse(**result)
+
+
+@api.post("/api/maintenance/restore", response_model=RestoreResponse, tags=["Health"], summary="恢复数据库")
+async def restore_database(req: RestoreRequest):
+    """从指定的备份文件恢复数据库。"""
+    from src.maintenance import restore_database
+    result = restore_database(req.backup_path)
+    return RestoreResponse(**result)
+
+
+@api.post("/api/maintenance/rotate-logs", response_model=RotateResponse, tags=["Health"], summary="滚动日志文件")
+async def rotate_logs():
+    """压缩超过 10MB 的日志文件，删除超过 5 个的旧日志。"""
+    from src.maintenance import rotate_logs
+    result = rotate_logs()
+    return RotateResponse(**result)
